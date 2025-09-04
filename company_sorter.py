@@ -96,7 +96,7 @@ TEMPLATE = r"""
     #lists > div { flex: 1; }
     #lists ul { list-style: none; padding: 0.5rem; border: 1px solid #ccc; max-height: 150px; overflow: auto; }
     .modal-backdrop { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); display: none; align-items: center; justify-content: center; z-index: 1000; }
-    .modal { background: white; padding: 1rem; border-radius: 8px; max-width: 600px; width: 90%; max-height: 80%; display: flex; flex-direction: column; }
+    .modal { background: white; padding: 1rem; border-radius: 8px; max-width: 600px; width: 90%; max-height: 80%; display: flex; flex-direction: column; position: relative; }
     .modal-header { font-size: 1.2rem; margin-bottom: 1rem; }
     .modal-body { flex: 1; overflow: auto; }
     .modal-footer { display: flex; justify-content: space-between; margin-top: 1rem; }
@@ -111,6 +111,25 @@ TEMPLATE = r"""
       background-color: #eef;
       cursor: pointer;
 }
+    #searchCeoBtn, #searchWebsiteBtn {
+      position: absolute;
+      left: 100%;
+      margin-left: 10px;
+      background: #007bff;
+      color: white;
+      border: none;
+      padding: 0.5rem 1rem;
+      border-radius: 4px;
+      cursor: pointer;
+      opacity: 0.8;
+      white-space: nowrap;
+    }
+    #searchCeoBtn {
+      top: 0;
+    }
+    #searchWebsiteBtn {
+      top: 60px;
+    }
 
   </style>
 </head>
@@ -130,6 +149,8 @@ TEMPLATE = r"""
 
   <div id="modalBackdrop" class="modal-backdrop">
     <div class="modal">
+      <button id="searchCeoBtn">Search CEO LinkedIn</button>
+      <button id="searchWebsiteBtn">Search Website</button>
       <div class="modal-header">Edit & Decide</div>
       <div class="modal-body" id="recordFields"></div>
       <div class="modal-footer">
@@ -154,8 +175,10 @@ TEMPLATE = r"""
   const skipBtn        = document.getElementById('skipBtn');
   const keepBtn        = document.getElementById('keepBtn');
   const loading        = document.getElementById('loading');
+  const searchCeoBtn   = document.getElementById('searchCeoBtn');
+  const searchWebsiteBtn   = document.getElementById('searchWebsiteBtn');
 
-  let headers = [], current = null;
+  let headers = [], current = null, originalRow = null;
 
   // —— Restore persisted state on load —— 
   window.addEventListener('load', function() {
@@ -242,6 +265,7 @@ TEMPLATE = r"""
       li.addEventListener('click', () => {
         current = {};
         headers.forEach((h, i) => current[h] = r[i] || '');
+        originalRow = r.slice();
         showFields();
         modal.style.display = 'flex';
       });
@@ -269,8 +293,10 @@ TEMPLATE = r"""
         if (d.done) {
           recordFields.innerHTML = '<p>No more records.</p>';
           current = null;
+          originalRow = null;
         } else {
           current = d.row;
+          originalRow = null;
           showFields();
         }
       });
@@ -304,7 +330,7 @@ TEMPLATE = r"""
     fetch(url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ row: collectRow() })
+      body: JSON.stringify({ row: collectRow(), original: originalRow })
     })
     .then(r => r.json())
     .then(d => {
@@ -316,6 +342,26 @@ TEMPLATE = r"""
   skipBtn.addEventListener('click', () => decide('/skip_record'));
   keepBtn.addEventListener('click', () => decide('/keep_record'));
   downloadBtn.addEventListener('click', () => window.location = '/download');
+
+  searchCeoBtn.addEventListener('click', () => {
+    const companyInput = recordFields.querySelector('input[data-field="Company"]');
+    if (companyInput && companyInput.value.trim()) {
+      const query = encodeURIComponent(companyInput.value.trim() + ' CEO LinkedIn');
+      window.open(`https://www.google.com/search?q=${query}`, '_blank');
+    }
+  });
+
+  searchWebsiteBtn.addEventListener('click', () => {
+    const fields = ['Company', 'Address', 'City', 'State', 'Zip'];
+    const parts = fields.map(field => {
+      const inp = recordFields.querySelector(`input[data-field="${field}"]`);
+      return inp ? inp.value.trim() : '';
+    }).filter(part => part !== '');
+    if (parts.length > 0) {
+      const query = encodeURIComponent(parts.join(' '));
+      window.open(`https://www.google.com/search?q=${query}`, '_blank');
+    }
+  });
 
   // —— Keyboard handling —— 
   document.addEventListener('keydown', function(e) {
@@ -360,16 +406,22 @@ TEMPLATE = r"""
       e.preventDefault();
       return;
     }
-    // 5) E/J → skip/keep
-    if (modal.style.display === 'flex') {
-      if (e.key.toLowerCase() === 'e') {
-        skipBtn.click();
-        e.preventDefault();
-      }
-      if (e.key.toLowerCase() === 'j') {
-        keepBtn.click();
-        e.preventDefault();
-      }
+    // 5) open + no focus + E/J → skip/keep
+    if (
+      modal.style.display === 'flex' &&
+      document.activeElement.tagName !== 'INPUT' &&
+      e.key.toLowerCase() === 'e'
+    ) {
+      skipBtn.click();
+      e.preventDefault();
+    }
+    if (
+      modal.style.display === 'flex' &&
+      document.activeElement.tagName !== 'INPUT' &&
+      e.key.toLowerCase() === 'j'
+    ) {
+      keepBtn.click();
+      e.preventDefault();
     }
   });
 </script>
@@ -405,9 +457,9 @@ def upload():
         wb = load_workbook(io.BytesIO(data), data_only=True)
         for i, rw in enumerate(wb.active.iter_rows(values_only=True)):
             if i == 0:
-                headers.extend([str(c) for c in rw])
+                headers.extend([str(c) for c in rw if c is not None])
             else:
-                all_rows.append([str(c) for c in rw])
+                all_rows.append([str(c) if c is not None else '' for c in rw])
     else:
         return jsonify(error='Unsupported file type'), 400
     save_state()
@@ -432,15 +484,18 @@ def next_record():
 @app.route('/skip_record', methods=['POST'])
 def skip_record():
     global current_record
-    data = request.json.get('row', {})
-    # build a raw row list in the same order as headers
-    row_list = [ data.get(h, '') for h in headers ]
-    # remove from keep_rows if it was there
+    data = request.json
+    row = data.get('row', {})
+    orig = data.get('original')
+    row_list = [row.get(h, '') for h in headers]
+    if orig is not None:
+        if orig in keep_rows:
+            keep_rows.remove(orig)
+        if orig in skip_rows:
+            skip_rows.remove(orig)
     if row_list in keep_rows:
         keep_rows.remove(row_list)
-    # add to skip_rows
     skip_rows.append(row_list)
-    # clear current so next_record pops the next one
     current_record = None
     save_state()
     return jsonify(keep_rows=keep_rows, skip_rows=skip_rows)
@@ -448,14 +503,18 @@ def skip_record():
 @app.route('/keep_record', methods=['POST'])
 def keep_record():
     global current_record
-    data = request.json.get('row', {})
-    row_list = [ data.get(h, '') for h in headers ]
-    # remove from skip_rows if it was there
+    data = request.json
+    row = data.get('row', {})
+    orig = data.get('original')
+    row_list = [row.get(h, '') for h in headers]
+    if orig is not None:
+        if orig in keep_rows:
+            keep_rows.remove(orig)
+        if orig in skip_rows:
+            skip_rows.remove(orig)
     if row_list in skip_rows:
         skip_rows.remove(row_list)
-    # add to keep_rows
     keep_rows.append(row_list)
-    # clear current so next_record pops the next one
     current_record = None
     save_state()
     return jsonify(keep_rows=keep_rows, skip_rows=skip_rows)
