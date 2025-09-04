@@ -155,7 +155,7 @@ TEMPLATE = r"""
   const keepBtn        = document.getElementById('keepBtn');
   const loading        = document.getElementById('loading');
 
-  let headers = [], current = null;
+  let headers = [], current = null, originalRow = null;
 
   // —— Restore persisted state on load —— 
   window.addEventListener('load', function() {
@@ -242,6 +242,7 @@ TEMPLATE = r"""
       li.addEventListener('click', () => {
         current = {};
         headers.forEach((h, i) => current[h] = r[i] || '');
+        originalRow = r.slice();
         showFields();
         modal.style.display = 'flex';
       });
@@ -269,8 +270,10 @@ TEMPLATE = r"""
         if (d.done) {
           recordFields.innerHTML = '<p>No more records.</p>';
           current = null;
+          originalRow = null;
         } else {
           current = d.row;
+          originalRow = null;
           showFields();
         }
       });
@@ -304,7 +307,7 @@ TEMPLATE = r"""
     fetch(url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ row: collectRow() })
+      body: JSON.stringify({ row: collectRow(), original: originalRow })
     })
     .then(r => r.json())
     .then(d => {
@@ -360,16 +363,22 @@ TEMPLATE = r"""
       e.preventDefault();
       return;
     }
-    // 5) E/J → skip/keep
-    if (modal.style.display === 'flex') {
-      if (e.key.toLowerCase() === 'e') {
-        skipBtn.click();
-        e.preventDefault();
-      }
-      if (e.key.toLowerCase() === 'j') {
-        keepBtn.click();
-        e.preventDefault();
-      }
+    // 5) open + no focus + E/J → skip/keep
+    if (
+      modal.style.display === 'flex' &&
+      document.activeElement.tagName !== 'INPUT' &&
+      e.key.toLowerCase() === 'e'
+    ) {
+      skipBtn.click();
+      e.preventDefault();
+    }
+    if (
+      modal.style.display === 'flex' &&
+      document.activeElement.tagName !== 'INPUT' &&
+      e.key.toLowerCase() === 'j'
+    ) {
+      keepBtn.click();
+      e.preventDefault();
     }
   });
 </script>
@@ -405,9 +414,9 @@ def upload():
         wb = load_workbook(io.BytesIO(data), data_only=True)
         for i, rw in enumerate(wb.active.iter_rows(values_only=True)):
             if i == 0:
-                headers.extend([str(c) for c in rw])
+                headers.extend([str(c) for c in rw if c is not None])
             else:
-                all_rows.append([str(c) for c in rw])
+                all_rows.append([str(c) if c is not None else '' for c in rw])
     else:
         return jsonify(error='Unsupported file type'), 400
     save_state()
@@ -432,15 +441,18 @@ def next_record():
 @app.route('/skip_record', methods=['POST'])
 def skip_record():
     global current_record
-    data = request.json.get('row', {})
-    # build a raw row list in the same order as headers
-    row_list = [ data.get(h, '') for h in headers ]
-    # remove from keep_rows if it was there
+    data = request.json
+    row = data.get('row', {})
+    orig = data.get('original')
+    row_list = [row.get(h, '') for h in headers]
+    if orig is not None:
+        if orig in keep_rows:
+            keep_rows.remove(orig)
+        if orig in skip_rows:
+            skip_rows.remove(orig)
     if row_list in keep_rows:
         keep_rows.remove(row_list)
-    # add to skip_rows
     skip_rows.append(row_list)
-    # clear current so next_record pops the next one
     current_record = None
     save_state()
     return jsonify(keep_rows=keep_rows, skip_rows=skip_rows)
@@ -448,14 +460,18 @@ def skip_record():
 @app.route('/keep_record', methods=['POST'])
 def keep_record():
     global current_record
-    data = request.json.get('row', {})
-    row_list = [ data.get(h, '') for h in headers ]
-    # remove from skip_rows if it was there
+    data = request.json
+    row = data.get('row', {})
+    orig = data.get('original')
+    row_list = [row.get(h, '') for h in headers]
+    if orig is not None:
+        if orig in keep_rows:
+            keep_rows.remove(orig)
+        if orig in skip_rows:
+            skip_rows.remove(orig)
     if row_list in skip_rows:
         skip_rows.remove(row_list)
-    # add to keep_rows
     keep_rows.append(row_list)
-    # clear current so next_record pops the next one
     current_record = None
     save_state()
     return jsonify(keep_rows=keep_rows, skip_rows=skip_rows)
