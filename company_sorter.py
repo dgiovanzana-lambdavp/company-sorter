@@ -110,8 +110,10 @@ TEMPLATE = r"""
     #lists li.clickable:hover {
       background-color: #eef;
       cursor: pointer;
-}
-    #searchCeoBtn, #searchWebsiteBtn {
+    }  /* ← close the rule */
+
+    /* side buttons */
+    #searchCeoBtn, #searchWebsiteBtn, #openWebsiteBtn, #openLinkedinBtn {
       position: absolute;
       left: 100%;
       margin-left: 10px;
@@ -124,12 +126,12 @@ TEMPLATE = r"""
       opacity: 0.8;
       white-space: nowrap;
     }
-    #searchCeoBtn {
-      top: 0;
-    }
-    #searchWebsiteBtn {
-      top: 60px;
-    }
+    #searchCeoBtn { top: 0; }
+    #searchWebsiteBtn { top: 40px; }
+    #openWebsiteBtn { top: 80px; }
+    #openLinkedinBtn { top: 120px; }
+
+
 
   </style>
 </head>
@@ -151,6 +153,8 @@ TEMPLATE = r"""
     <div class="modal">
       <button id="searchCeoBtn">Search CEO LinkedIn</button>
       <button id="searchWebsiteBtn">Search Website</button>
+      <button id="openWebsiteBtn">Open Website [Enter]</button>
+      <button id="openLinkedinBtn">Open LinkedIn [Q]</button>
       <div class="modal-header">Edit & Decide</div>
       <div class="modal-body" id="recordFields"></div>
       <div class="modal-footer">
@@ -177,6 +181,17 @@ TEMPLATE = r"""
   const loading        = document.getElementById('loading');
   const searchCeoBtn   = document.getElementById('searchCeoBtn');
   const searchWebsiteBtn   = document.getElementById('searchWebsiteBtn');
+  const openWebsiteBtn     = document.getElementById('openWebsiteBtn');
+  const openLinkedinBtn  = document.getElementById('openLinkedinBtn');
+
+  function openLinkedin() {                                              // new
+  if (current && current['Linkedin']) {
+    let u = current['Linkedin'];
+    if (!/^https?:\/\//i.test(u)) u = 'http://' + u;
+    window.open(u, '_blank');
+  }
+  }
+  openLinkedinBtn.addEventListener('click', openLinkedin);  
 
   let headers = [], current = null, originalRow = null;
 
@@ -363,6 +378,14 @@ TEMPLATE = r"""
     }
   });
 
+  openWebsiteBtn.addEventListener('click', () => {
+  if (current && current['Website']) {
+    let u = current['Website'];
+    if (!/^https?:\/\//i.test(u)) u = 'http://' + u;
+    window.open(u, '_blank');
+  }
+});
+
   // —— Keyboard handling —— 
   document.addEventListener('keydown', function(e) {
     // 1) closed + Enter → open modal
@@ -393,6 +416,16 @@ TEMPLATE = r"""
         if (!/^https?:\/\//i.test(u)) u = 'http://' + u;
         window.open(u, '_blank');
       }
+      e.preventDefault();
+      return;
+    }
+    // 3b) open + no focus + Q → open LinkedIn
+    if (
+      modal.style.display === 'flex' &&
+      document.activeElement.tagName !== 'INPUT' &&
+      (e.code === 'KeyQ' || e.key === 'q' || e.key === 'Q')
+    ) {
+      openLinkedin();           // calls the function you added in step 3
       e.preventDefault();
       return;
     }
